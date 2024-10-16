@@ -43,12 +43,12 @@ def connect_to_mongodb():
 def get_raw_content(client):
     db = client['adaptaria']
     collection = db['contents']
-    result = collection.find_one({"status": "pending"}, {"_id": 1, "key": 1}, sort=[('updatedAt', 1)])
+    result = collection.find_one({"status": "PENDING"}, {"_id": 1, "key": 1}, sort=[('updatedAt', 1)])
     if result is None:
         print("No content found")
         client.close()
         exit(0)
-    print(result)
+    collection.update_one({"_id": result["_id"]}, {"$set": {"status": "PROCESSING"}})
     return {
         "id": result["_id"],
         "key": result["key"]
@@ -62,7 +62,7 @@ def fetch_file_from_s3(key):
 def upload_generated_content(client, id, final_summary, markmap, game):
     db = client['adaptaria']
     collection = db['contents']
-    collection.update_one({"_id": id}, {"$set": {"status": "done", "generated": [{ "type": "SUMMARY", "content": final_summary, "approved": False }, { "type": "MIND_MAP", "content": markmap, "approved": False }, { "type": "GAMIFICATION", "content": game, "approved": False}, { "type": "SPEECH", "content": "", "approved": False }]}})
+    collection.update_one({"_id": id}, {"$set": {"status": "DONE", "generated": [{ "type": "SUMMARY", "content": final_summary, "approved": False }, { "type": "MIND_MAP", "content": markmap, "approved": False }, { "type": "GAMIFICATION", "content": game, "approved": False}, { "type": "SPEECH", "content": "", "approved": False }]}})
     print("Content updated successfully")
 
 # ------------------------------------------------------------------------------------------------------
@@ -186,19 +186,19 @@ El JSON esperado, debe tener un formato como el siguiente:
                 "options": [
                     {{
                         "answer": "AQUÍ VA UNA POSIBLE RESPUESTA",
-                        "justificación": "AQUÍ VA LA JUSTIFICACIÓN DE POR QUÉ LA RESPUESTA ES CORRECTA O INCORRECTA"
+                        "justification": "AQUÍ VA LA JUSTIFICACIÓN DE POR QUÉ LA RESPUESTA ES CORRECTA O INCORRECTA"
                     }},
                     {{
                         "answer": "AQUÍ VA UNA POSIBLE RESPUESTA",
-                        "justificación": "AQUÍ VA LA JUSTIFICACIÓN DE POR QUÉ LA RESPUESTA ES CORRECTA O INCORRECTA"
+                        "justification": "AQUÍ VA LA JUSTIFICACIÓN DE POR QUÉ LA RESPUESTA ES CORRECTA O INCORRECTA"
                     }},
                     {{
                         "answer": "AQUÍ VA UNA POSIBLE RESPUESTA",
-                        "justificación": "AQUÍ VA LA JUSTIFICACIÓN DE POR QUÉ LA RESPUESTA ES CORRECTA O INCORRECTA"
+                        "justification": "AQUÍ VA LA JUSTIFICACIÓN DE POR QUÉ LA RESPUESTA ES CORRECTA O INCORRECTA"
                     }},
                     {{
                         "answer": "AQUÍ VA UNA POSIBLE RESPUESTA",
-                        "justificación": "AQUÍ VA LA JUSTIFICACIÓN DE POR QUÉ LA RESPUESTA ES CORRECTA O INCORRECTA"
+                        "justification": "AQUÍ VA LA JUSTIFICACIÓN DE POR QUÉ LA RESPUESTA ES CORRECTA O INCORRECTA"
                     }},
                 ],
                 "correctAnswer": "AQUÍ VA EL ÍNDICE DE LA RESPUESTA CORRECTA"
@@ -208,19 +208,19 @@ El JSON esperado, debe tener un formato como el siguiente:
                 "options": [
                     {{
                         "answer": "AQUÍ VA UNA POSIBLE RESPUESTA",
-                        "justificación": "AQUÍ VA LA JUSTIFICACIÓN DE POR QUÉ LA RESPUESTA ES CORRECTA O INCORRECTA"
+                        "justification": "AQUÍ VA LA JUSTIFICACIÓN DE POR QUÉ LA RESPUESTA ES CORRECTA O INCORRECTA"
                     }},
                     {{
                         "answer": "AQUÍ VA UNA POSIBLE RESPUESTA",
-                        "justificación": "AQUÍ VA LA JUSTIFICACIÓN DE POR QUÉ LA RESPUESTA ES CORRECTA O INCORRECTA"
+                        "justification": "AQUÍ VA LA JUSTIFICACIÓN DE POR QUÉ LA RESPUESTA ES CORRECTA O INCORRECTA"
                     }},
                     {{
                         "answer": "AQUÍ VA UNA POSIBLE RESPUESTA",
-                        "justificación": "AQUÍ VA LA JUSTIFICACIÓN DE POR QUÉ LA RESPUESTA ES CORRECTA O INCORRECTA"
+                        "justification": "AQUÍ VA LA JUSTIFICACIÓN DE POR QUÉ LA RESPUESTA ES CORRECTA O INCORRECTA"
                     }},
                     {{
                         "answer": "AQUÍ VA UNA POSIBLE RESPUESTA",
-                        "justificación": "AQUÍ VA LA JUSTIFICACIÓN DE POR QUÉ LA RESPUESTA ES CORRECTA O INCORRECTA"
+                        "justification": "AQUÍ VA LA JUSTIFICACIÓN DE POR QUÉ LA RESPUESTA ES CORRECTA O INCORRECTA"
                     }},
                 ],
                 "correctAnswer": "AQUÍ VA EL ÍNDICE DE LA RESPUESTA CORRECTA"
