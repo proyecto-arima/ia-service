@@ -1,3 +1,4 @@
+import json
 import operator
 import os
 from typing import Annotated, List, Literal, TypedDict
@@ -24,7 +25,7 @@ from pymongo import MongoClient
 import requests
 
 load_dotenv()
-set_llm_cache(SQLiteCache(database_path=".langchain.db"))
+
 
 token_max = 100000
 
@@ -43,12 +44,17 @@ def connect_to_mongodb():
 def get_raw_content(client):
     db = client['adaptaria']
     collection = db['contents']
-    result = collection.find_one({"status": "PENDING"}, {"_id": 1, "key": 1}, sort=[('updatedAt', 1)])
+    status = ["PENDING", "FAILED", "RETRY"]
+    result = collection.find_one({"status": {"$in": status}}, {"_id": 1, "key": 1, "status": 1}, sort=[('updatedAt', 1)])
     if result is None:
         print("No content found")
         client.close()
         exit(0)
     collection.update_one({"_id": result["_id"]}, {"$set": {"status": "PROCESSING"}})
+    
+    if result['status'] == "PENDING":
+        set_llm_cache(SQLiteCache(database_path=".langchain.db"))
+    
     return {
         "id": result["_id"],
         "key": result["key"]
@@ -62,8 +68,16 @@ def fetch_file_from_s3(key):
 def upload_generated_content(client, id, final_summary, markmap, game):
     db = client['adaptaria']
     collection = db['contents']
-    collection.update_one({"_id": id}, {"$set": {"status": "DONE", "generated": [{ "type": "SUMMARY", "content": final_summary, "approved": False }, { "type": "MIND_MAP", "content": markmap, "approved": False }, { "type": "GAMIFICATION", "content": game, "approved": False}, { "type": "SPEECH", "content": "", "approved": False }]}})
-    print("Content updated successfully")
+    
+    try: 
+        json.loads(game) ## Only for validating
+        collection.update_one({"_id": id}, {"$set": {"status": "DONE", "generated": [{ "type": "SUMMARY", "content": final_summary, "approved": False }, { "type": "MIND_MAP", "content": markmap, "approved": False }, { "type": "GAMIFICATION", "content": game, "approved": False}, { "type": "SPEECH", "content": "", "approved": False }]}})
+        print("Content updated successfully")
+    except Exception as e:
+        print("Failed to update content", e)
+        collection.update_one({"_id": id}, {"$set": {"status": "FAILED"}})
+        
+    
 
 # ------------------------------------------------------------------------------------------------------
 
@@ -104,7 +118,7 @@ def get_pages_from_url(url):
 #pages = loaded_file.load_and_split(semantic_chunker)
 #pages = [Document(page.page_content.replace("\n", " ")) for page in pages]
 
-openai_gpt4 = ChatOpenAI(model='gpt-4o-mini', openai_api_key=os.getenv("OPENAI_API_KEY"), max_tokens=16384)
+openai_gpt4 = ChatOpenAI(model='gpt-4o-mini', max_tokens=16384)
 
 ## Change the model to the one you want to use
 summary_llm = openai_gpt4;
@@ -366,6 +380,7 @@ async def consolidate_results(state: OverallState):
         "markmap": state["markmap"],
         "game": state["game"]
     }
+
     
     
 
