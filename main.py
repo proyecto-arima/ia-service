@@ -65,18 +65,27 @@ def fetch_file_from_s3(key):
     response = s3_client.generate_presigned_url('get_object', Params={'Bucket': os.getenv("BUCKET"), 'Key': f'{os.getenv("PREFIX")}/{key}'}, ExpiresIn=120)
     return response
 
-def upload_generated_content(client, id, final_summary, markmap, game):
+def upload_generated_content(client, id, final_summary, markmap, game, audio_texts):
     db = client['adaptaria']
     collection = db['contents']
     
     try: 
         json.loads(game) ## Only for validating
-        collection.update_one({"_id": id}, {"$set": {"status": "DONE", "generated": [{ "type": "SUMMARY", "content": final_summary, "approved": False }, { "type": "MIND_MAP", "content": markmap, "approved": False }, { "type": "GAMIFICATION", "content": game, "approved": False}, { "type": "SPEECH", "content": "", "approved": False }]}})
+        audio_texts = json.loads(audio_texts) ## Only for validating
+        for audio_text in audio_texts:
+            if len(audio_text) > 4096:
+                raise Exception("Audio text too long")
+        audio_texts = [{"text": audio_text, "audioUrl": ""} for audio_text in audio_texts]
+        collection.update_one({"_id": id}, {"$set": {"status": "DONE", "generated": [{ "type": "SUMMARY", "content": final_summary, "approved": False }, { "type": "MIND_MAP", "content": markmap, "approved": False }, { "type": "GAMIFICATION", "content": game, "approved": False}, { "type": "SPEECH", "content": audio_texts, "approved": False }]}})
         print("Content updated successfully")
     except Exception as e:
         print("Failed to update content", e)
         collection.update_one({"_id": id}, {"$set": {"status": "FAILED"}})
         
+def update_failed_content(client, id):
+    db = client['adaptaria']
+    collection = db['contents']
+    collection.update_one({"_id": id}, {"$set": {"status": "FAILED"}})
     
 
 # ------------------------------------------------------------------------------------------------------
@@ -248,6 +257,20 @@ FRAGMENTOS DE TEXTO:
 {text}
 """
 
+generate_audio_text_template = """
+A continuación, se proveerán un conjunto de resúmenes de un texto.
+Genera un texto unificado que contenga la información de todos los fragmentos proporcionados.
+No menciones que es un resumen y no incluyas texto del estilo: "El texto habla de..." o "En resumen,...", solo escribe el contenido.
+No agregues información que no esté en el texto original.
+Eres un proceso automático, tus respuestas no las va a leer un humano, no te disculpes. Si la respuesta no se puede generar, solo escribe "[<SKIPPED>]"
+Si no se puede resumir el fragmento de texto por ser irrelevante, ignoralo".
+El formato esperado es un json array, donde cada elemento es un string de COMO MÁXIMO 4096 caracteres.
+Cada fragmento de texto debe tener coherencia y sentido por sí solo, no debe tener oraciones o palabras divididas.
+
+FRAGMENTOS DE TEXTO:
+{text}
+"""
+
 # -------------------------------------------------------------------------------------------------------
 
 # ---------------------------------------------- Templates ----------------------------------------------
@@ -256,6 +279,7 @@ map_chat_prompt = ChatPromptTemplate.from_messages([("human", map_prompt_templat
 reduce_to_summary_prompt_chat = ChatPromptTemplate.from_messages([("human", reduce_to_summary_template)])
 reduce_to_markmap = PromptTemplate(template=reduce_to_markmap_template, input_variables=["text"])
 generate_game_prompt = ChatPromptTemplate.from_messages([("human", generate_game_template)])
+generate_audio_text_prompt_chat = ChatPromptTemplate.from_messages([("human", generate_audio_text_template)])
 
 # ------------------------------------------------------------------------------------------------------
 
@@ -265,6 +289,7 @@ map_chain_chat = map_chat_prompt | summary_llm | StrOutputParser()
 markmap_chain = reduce_to_markmap | markmap_llm | StrOutputParser()
 reduce_to_summary_chain_chat = reduce_to_summary_prompt_chat | summary_llm | StrOutputParser()
 generate_game_chain = generate_game_prompt | game_llm | StrOutputParser()
+generate_audio_text_chain_chat = generate_audio_text_prompt_chat | summary_llm | StrOutputParser()
 
 # ------------------------------------------------------------------------------------------------------
 
@@ -287,6 +312,7 @@ class OverallState(TypedDict):
     final_summary: str
     markmap: str
     game: str
+    audio_texts: str
     #trace_url: str
     #total_cost: float
     
@@ -365,6 +391,7 @@ async def clean_markmap(state: OverallState):
         return {"markmap": state["markmap"].removeprefix("```").removesuffix("```")}
     if state["markmap"].startswith("```markdown"):
         return {"markmap": state["markmap"].removeprefix("```markdown").removesuffix("```")}
+    return {"markmap": state["markmap"]}
     
     
 async def clean_game(state: OverallState):
@@ -372,13 +399,29 @@ async def clean_game(state: OverallState):
         return {"game": state["game"].removeprefix("```").removesuffix("```")}
     if state["game"].startswith("```json"):
         return {"game": state["game"].removeprefix("```json").removesuffix("```")}
+    return {"game": state["game"]}
+
+
+async def clean_audio_texts(state: OverallState):
+    if state["audio_texts"].startswith("```") and not state["audio_texts"].startswith("```json"):
+        return {"audio_texts": state["audio_texts"].removeprefix("```").removesuffix("```")}
+    if state["audio_texts"].startswith("```json"):
+        return {"audio_texts": state["audio_texts"].removeprefix("```json").removesuffix("```")}
+    return {"audio_texts": state["audio_texts"]}
+
+
+async def generate_audio_chunks(state: OverallState):
+    context = "".join([doc.page_content for doc in state["collapsed_summaries"]])
+    response = await generate_audio_text_chain_chat.ainvoke({"text": context})
+    return {"audio_texts": response}
     
     
 async def consolidate_results(state: OverallState):
     return {
         "final_summary": state["final_summary"],
         "markmap": state["markmap"],
-        "game": state["game"]
+        "game": state["game"],
+        "audio_texts": state["audio_texts"]
     }
 
     
@@ -416,6 +459,8 @@ graph.add_node("generate_game", generate_game)  # Nodo para generar juego
 graph.add_node("clean_markmap", clean_markmap)
 graph.add_node("clean_game", clean_game)
 graph.add_node("consolidate_results", consolidate_results)
+graph.add_node("generate_audio_chunks", generate_audio_chunks)
+graph.add_node("clean_audio_texts", clean_audio_texts)
 
 # Edges:
 graph.add_conditional_edges(START, map_summaries, ["generate_summary"])
@@ -424,9 +469,11 @@ graph.add_conditional_edges("collect_summaries", should_collapse)
 graph.add_conditional_edges("collapse_summaries", should_collapse)
 graph.add_edge("generate_final_summary", "generate_markmap")  # Conectar resumen final con la generación del markmap
 graph.add_edge("generate_markmap", "generate_game")  # Conectar resumen final con la generación del juego
-graph.add_edge("generate_game", "clean_markmap")
+graph.add_edge("generate_game", "generate_audio_chunks")
+graph.add_edge("generate_audio_chunks", "clean_markmap")
 graph.add_edge("clean_markmap", "clean_game")
-graph.add_edge("clean_game", "consolidate_results")
+graph.add_edge("clean_game", "clean_audio_texts")
+graph.add_edge("clean_audio_texts", "consolidate_results")
 graph.add_edge("consolidate_results", END)
 
 #graph.add_edge("fetch_trace_url", END) 
@@ -436,7 +483,7 @@ app = graph.compile()
 
 async def get_summaries(contents: List[str]):
     result = []
-    async for step in app.astream({"contents": [doc.page_content for doc in pages]}, {"recursion_limit": 10},):
+    async for step in app.astream({"contents": [doc.page_content for doc in pages]}, {"recursion_limit": 20},):
     #   print(list(step.keys()))
     #   print(step)
       result.append(step)
@@ -453,9 +500,14 @@ if __name__ == "__main__":
     url = fetch_file_from_s3(raw["key"])
     print(url)
     pages = get_pages_from_url(url)
-    result = asyncio.run(get_summaries(pages), debug=True)
-    upload_generated_content(client, raw["id"], result["final_summary"], result["markmap"], result["game"])
-    client.close()
+    try:
+        result = asyncio.run(get_summaries(pages), debug=True)
+        upload_generated_content(client, raw["id"], result["final_summary"], result["markmap"], result["game"], result["audio_texts"])
+    except Exception as e:
+        print("Error", e)
+        update_failed_content(client, raw["id"])
+    finally:
+        client.close()
     
     
     
