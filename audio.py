@@ -40,6 +40,11 @@ collection = db['contents']
 status = ["PENDING_AUDIO", "FAILED_AUDIO"]
 result = collection.find_one({"status": {"$in": status}}, {"_id": 1, "generated": 1, "status": 1}, sort=[('updatedAt', 1)])
 
+if result is None:
+    print("No content found")
+    client.close()
+    exit(0)
+
 print("Processing audio", result["_id"])
 update_content_status(result["_id"], "PROCESSING_AUDIO")
 
