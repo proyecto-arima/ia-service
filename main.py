@@ -76,7 +76,7 @@ def upload_generated_content(client, id, final_summary, markmap, game, audio_tex
             if len(audio_text) > 4096:
                 raise Exception("Audio text too long")
         audio_texts = [{"text": audio_text, "audioUrl": ""} for audio_text in audio_texts]
-        collection.update_one({"_id": id}, {"$set": {"status": "DONE", "generated": [{ "type": "SUMMARY", "content": final_summary, "approved": False }, { "type": "MIND_MAP", "content": markmap, "approved": False }, { "type": "GAMIFICATION", "content": game, "approved": False}, { "type": "SPEECH", "content": audio_texts, "approved": False }]}})
+        collection.update_one({"_id": id}, {"$set": {"status": "PENDING_AUDIO", "generated": [{ "type": "SUMMARY", "content": final_summary, "approved": False }, { "type": "MIND_MAP", "content": markmap, "approved": False }, { "type": "GAMIFICATION", "content": game, "approved": False}, { "type": "SPEECH", "content": audio_texts, "approved": False }]}})
         print("Content updated successfully")
     except Exception as e:
         print("Failed to update content", e)
